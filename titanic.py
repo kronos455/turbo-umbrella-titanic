@@ -1,149 +1,218 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Sun Apr 23 01:41:48 2017
+Created on Sun May 21 02:16:22 2017
 
 @author: bmitchell
 """
 
-import re	
-import csv 
+import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.ensemble import AdaBoostClassifier
-from datetime import datetime
-from sklearn.cross_validation import cross_val_score
 
-# Add time along with the log
-def log(string):
-        print(str(datetime.now()) + " " + string)
+def get_combined_data():
+    # reading train data
+    train = pd.read_csv('train.csv')
+    
+    # reading test data
+    test = pd.read_csv('test.csv')
+
+    # extracting and then removing the targets from the training data 
+    #targets = train.Survived
+    #train.drop('Survived', 1, inplace=True)
+    
+
+    # merging train data and test data for future feature engineering
+    combined = train.append(test)
+    combined.reset_index(inplace=True)
+    combined.drop('index', inplace=True, axis=1)
+    
+    return combined
+
+def get_titles(combined):
+
+    #global combined
+    
+    # we extract the title from each name
+    combined['Title'] = combined['Name'].map(lambda name:name.split(',')[1].split('.')[0].strip())
+    
+    # a map of more aggregated titles
+    Title_Dictionary = {
+                        "Capt":       "Officer",
+                        "Col":        "Officer",
+                        "Major":      "Officer",
+                        "Jonkheer":   "Royalty",
+                        "Don":        "Royalty",
+                        "Sir" :       "Royalty",
+                        "Dr":         "Officer",
+                        "Rev":        "Officer",
+                        "the Countess":"Royalty",
+                        "Dona":       "Royalty",
+                        "Mme":        "Mrs",
+                        "Mlle":       "Miss",
+                        "Ms":         "Mrs",
+                        "Mr" :        "Mr",
+                        "Mrs" :       "Mrs",
+                        "Miss" :      "Miss",
+                        "Master" :    "Master",
+                        "Lady" :      "Royalty"
+                        }
+    
+    # we map each title
+    combined['Title'] = combined.Title.map(Title_Dictionary)
+    
+    return combined
+
+def process_age(combined):
+    
+    #global combined
+    
+    grouped_train = combined.head(891).groupby(['Sex','Pclass','Title'])
+    grouped_median_train = grouped_train.median()
+
+    grouped_test = combined.iloc[891:].groupby(['Sex','Pclass','Title'])
+    grouped_median_test = grouped_test.median()
+    
+    # a function that fills the missing values of the Age variable
+    
+    def fillAges(row, grouped_median):
+        if row['Sex']=='female' and row['Pclass'] == 1:
+            if row['Title'] == 'Miss':
+                return grouped_median.loc['female', 1, 'Miss']['Age']
+            elif row['Title'] == 'Mrs':
+                return grouped_median.loc['female', 1, 'Mrs']['Age']
+            elif row['Title'] == 'Officer':
+                return grouped_median.loc['female', 1, 'Officer']['Age']
+            elif row['Title'] == 'Royalty':
+                return grouped_median.loc['female', 1, 'Royalty']['Age']
+
+        elif row['Sex']=='female' and row['Pclass'] == 2:
+            if row['Title'] == 'Miss':
+                return grouped_median.loc['female', 2, 'Miss']['Age']
+            elif row['Title'] == 'Mrs':
+                return grouped_median.loc['female', 2, 'Mrs']['Age']
+
+        elif row['Sex']=='female' and row['Pclass'] == 3:
+            if row['Title'] == 'Miss':
+                return grouped_median.loc['female', 3, 'Miss']['Age']
+            elif row['Title'] == 'Mrs':
+                return grouped_median.loc['female', 3, 'Mrs']['Age']
+
+        elif row['Sex']=='male' and row['Pclass'] == 1:
+            if row['Title'] == 'Master':
+                return grouped_median.loc['male', 1, 'Master']['Age']
+            elif row['Title'] == 'Mr':
+                return grouped_median.loc['male', 1, 'Mr']['Age']
+            elif row['Title'] == 'Officer':
+                return grouped_median.loc['male', 1, 'Officer']['Age']
+            elif row['Title'] == 'Royalty':
+                return grouped_median.loc['male', 1, 'Royalty']['Age']
+
+        elif row['Sex']=='male' and row['Pclass'] == 2:
+            if row['Title'] == 'Master':
+                return grouped_median.loc['male', 2, 'Master']['Age']
+            elif row['Title'] == 'Mr':
+                return grouped_median.loc['male', 2, 'Mr']['Age']
+            elif row['Title'] == 'Officer':
+                return grouped_median.loc['male', 2, 'Officer']['Age']
+
+        elif row['Sex']=='male' and row['Pclass'] == 3:
+            if row['Title'] == 'Master':
+                return grouped_median.loc['male', 3, 'Master']['Age']
+            elif row['Title'] == 'Mr':
+                return grouped_median.loc['male', 3, 'Mr']['Age']
+    
+    combined.head(891).Age = combined.head(891).apply(lambda r : fillAges(r, grouped_median_train) if np.isnan(r['Age']) 
+                                                      else r['Age'], axis=1)
+    
+    combined.iloc[891:].Age = combined.iloc[891:].apply(lambda r : fillAges(r, grouped_median_test) if np.isnan(r['Age']) 
+                                                      else r['Age'], axis=1)
+    
+    #status('age')
+    return combined
+
+def process_names(combined):
+    
+    #global combined
+    # we clean the Name variable
+    combined.drop('Name',axis=1,inplace=True)
+    
+    # encoding in dummy variable
+    titles_dummies = pd.get_dummies(combined['Title'],prefix='Title')
+    combined = pd.concat([combined,titles_dummies],axis=1)
+    
+    # removing the title variable
+    combined.drop('Title',axis=1,inplace=True)
+    
+    return combined
+
+def process_embarked(combined):
+    
+    #global combined
+    # two missing embarked values - filling them with the most frequent one (S)
+    combined.head(891).Embarked.fillna('S', inplace=True)
+    combined.iloc[891:].Embarked.fillna('S', inplace=True)
+    
+    
+    # dummy encoding 
+    embarked_dummies = pd.get_dummies(combined['Embarked'],prefix='Embarked')
+    combined = pd.concat([combined,embarked_dummies],axis=1)
+    combined.drop('Embarked',axis=1,inplace=True)
+    
+    return combined
+
+#def process_ticket(combined):
+    
+    #global combined
+    
+    # a function that extracts each prefix of the ticket, returns 'XXX' if no prefix (i.e the ticket is a digit)
+    def cleanTicket(ticket):
+        ticket = ticket.replace('.','')
+        ticket = ticket.replace('/','')
+        ticket = ticket.split()
+        ticket = map(lambda t : t.strip(), ticket)
+        ticket = filter(lambda t : not t.isdigit(), ticket)
+        if len(ticket) > 0:
+            return ticket[0]
+        else: 
+            return 'XXX'
+    
+
+    # Extracting dummy variables from tickets:
+
+    combined['Ticket'] = combined['Ticket'].map(cleanTicket)
+    tickets_dummies = pd.get_dummies(combined['Ticket'], prefix='Ticket')
+    combined = pd.concat([combined, tickets_dummies], axis=1)
+    combined.drop('Ticket', inplace=True, axis=1)
+
+    return combined
+
+def clean_combined(combined):
+    combined['female'] = np.where(combined['Sex']=='female', 1, 0)
+    match = combined['SibSp'] + combined['Parch']
+    combined['isAlone'] = np.where(match > 0, 0, 1)
+    combined['hasCabin'] = np.where(pd.isnull(combined['Cabin']), 0, 1)
+    combined['isChild'] = np.where(combined['Age']<13, 1, 0)
+    combined['wealthy'] = np.where((combined['Fare'] >= 50) & (combined['Pclass'] == 1 ),1,0)
+    combined['HoH'] = np.where((combined['Sex'] == 'male') & (combined['Age'] >= 18 ) & (combined['Parch'] != 0),1,0)
+    combined['mother'] = np.where((combined['Sex'] == 'female') & (combined['Age'] >= 18 ) & (combined['Parch'] != 0),1,0)
+    combined = combined.drop(['Sex', 'SibSp', 'Parch', 'Cabin'], axis=1)
+    
+    return combined
 
 
-# Convert the gender
-def convertGender(gender):
-	if gender == 'female':
-		gender = 0
-	if gender == 'male':
-		gender = 1
-	return gender
+def main():
+    
+    combined = get_combined_data()
+    combined = get_titles(combined)
+    combined = process_age(combined)
+    combined = process_names(combined)
+    combined = process_embarked(combined)
+    #combined = process_ticket(combined)
+    combined = clean_combined(combined)
+    train4 = combined.head(891)
+    test4 = combined.iloc[891:]
+    train4.to_csv('train4.csv', header ='column_names')
+    test4.to_csv('test4.csv', header ='column_names')
+    
+main()
 
-# Convert the embarked field
-def convertEmbarked(embarked):
-	if embarked == 'C':
-		embarked = 0
-	if embarked == 'Q':
-		embarked = 1
-	if embarked == 'S':
-		embarked = 2
-	else:
-		embarked = '2'
-	return embarked
-
-# return title
-def getTitle(name):
-	for word in name.split():
-		if word.endswith('.'):
-			title=word
-			break
-	return title
-
-# convert title to hash 
-# TODO need to improve
-def getTitleHash(title,gender):
-	has = ord(title[0]) + len(title) + int(gender)
-	return has
-
-# returns one if the passenger had a family
-def getFamily(sibsp,parch):
-	if int(sibsp) + int(parch) > 0:
-		family = 1
-	else:
-		family = 0
-	return family
-
-# Pull out the dept from the ticket number
-def getTicketCode(ticket):
-    deptName = re.sub(r"$\d+\W+|\b\d+\b|\W+\d+$", "", ticket)
-    if len(deptName) == 0:
-        deptName = 'none'
-    deptCode = ord(deptName[0]) + len(deptName)
-    return deptCode
-
-if __name__ == '__main__':	
-
-	log("Reading Train Data")
-	
-	train = csv.reader(open('train.csv','rb'))
-	#header = train.next()
-	
-	######READING TRAIN DATA################	
-	train_data=[]
-	for row in train:
-	        train_data.append(row)
-	
-	train_data = np.array(train_data)
-	
-	log("DONE Reading Train Data")
-	
-	log("Preprocessing Train Data")
-	# replace categorical attributes
-	for row in train_data:
-		
-		row[4] = convertGender(row[4])
-		title = getTitle(row[3])
-		row[3] = getTitleHash(title,row[4])
-		row[6] = getFamily(row[6],row[7])
-		row[8] = getTicketCode(row[8])
-		row[11] = convertEmbarked(row[11])
-		
-
-	features = train_data[0::,[2,3,4,6,8,11]]
-	result = train_data[0::,1]
-	log("DONE Preprocessing Train Data")
-
-	log("Fitting Train Data")
-	adaBoost = AdaBoostClassifier(RandomForestClassifier(n_estimators = 1000),
-                         algorithm="SAMME",
-                         n_estimators=200)
-	
-	adaBoost = adaBoost.fit(features,result)
-	log("DONE Fitting Train Data")
-
-	log("Calculating score")
-	scores = cross_val_score(adaBoost, features, result)
-	log("Training score")
-	print(scores.mean())
-	log("DONE Calculating score")
-	
-
-	######READING TEST DATA################	
-	log("Reading Test Data")
-	test = csv.reader(open('test.csv','rb'))
-	#header = test.next()
-	
-	test_data=[]
-	for row in test:
-	        test_data.append(row)
-	test_data = np.array(test_data)
-	log("DONE Reading Test Data")
-	
-	# replace categorical attributes
-	log("Preprocessing Test Data")
-	for row in test_data:
-		
-		row[3] = convertGender(row[3])
-		title = getTitle(row[2])
-		row[2] = getTitleHash(title,row[3])
-		row[5] = getFamily(row[5],row[6])
-		row[7] = getTicketCode(row[7])
-		row[10] = convertEmbarked(row[10])
-		
-
-	features = test_data[0::,[1,2,3,5,7,10]]
-	log("DONE Preprocessing Test Data")
-	
-	log("Predicting Test Data")
-	Output = adaBoost.predict(features)
-	
-	np.savetxt("adaBoostRandomForest.csv",Output,delimiter=",",fmt="%s")	
-	log("DONE Predicting Test Data")
